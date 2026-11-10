@@ -28,6 +28,7 @@ from .api.v1 import (
     health,
     persistent_auth,
     dashboard,
+    properties,
     login,
 )
 
@@ -100,6 +101,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Supabase connection pool initialization failed: {e}")
         # Continue startup - fallback to direct connections
 
+    # Initialize the PostgreSQL pool used by revenue queries
+    try:
+        from .core.database_pool import db_pool
+
+        await db_pool.initialize()
+    except Exception as e:
+        logger.error(f"PostgreSQL pool initialization failed: {e}")
+        # Lazy initialization will retry on the first revenue request
+
     # Initialize Redis connection with timeout
     try:
         await redis_client.initialize()
@@ -126,6 +136,15 @@ async def lifespan(app: FastAPI):
     # Shutdown async processor
     await async_processor.shutdown()
     logger.info("Async processor shutdown completed")
+
+    # Close PostgreSQL pool
+    try:
+        from .core.database_pool import db_pool
+
+        await db_pool.close()
+        logger.info("PostgreSQL connection pool closed")
+    except Exception as e:
+        logger.warning(f"Error closing PostgreSQL pool: {e}")
 
     # Close connection pool
     try:
@@ -183,6 +202,7 @@ app.include_router(profile.router, prefix="/api/v1", tags=["profile"])
 
 # Dashboard
 app.include_router(dashboard.router, prefix="/api/v1", tags=["dashboard"])
+app.include_router(properties.router, prefix="/api/v1", tags=["properties"])
 
 # Bootstrap & Settings (for AppContext)
 app.include_router(company_settings.router, prefix="/api/v1", tags=["company-settings"])
