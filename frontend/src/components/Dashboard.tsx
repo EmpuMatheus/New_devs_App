@@ -1,17 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { SecureAPI } from "../lib/secureApi";
-import { RevenueSummary } from "./RevenueSummary";
+import { RevenueSummary, RevenuePeriod } from "./RevenueSummary";
 
 interface Property {
   id: string;
   name: string;
 }
 
+type ReportType = 'total' | 'monthly' | 'annual';
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 const Dashboard: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [selectedProperty, setSelectedProperty] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const now = new Date();
+  const [reportType, setReportType] = useState<ReportType>('total');
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +57,12 @@ const Dashboard: React.FC = () => {
     return () => { cancelled = true; };
   }, []);
 
+  const period: RevenuePeriod = reportType === 'monthly'
+    ? { type: 'monthly', year, month }
+    : reportType === 'annual'
+      ? { type: 'annual', year }
+      : { type: 'total' };
+
   return (
     <div className="p-4 lg:p-6 min-h-full">
       <div className="max-w-7xl mx-auto">
@@ -56,24 +74,73 @@ const Dashboard: React.FC = () => {
               <div>
                 <h2 className="text-lg lg:text-xl font-medium text-gray-900 mb-2">Revenue Overview</h2>
                 <p className="text-sm lg:text-base text-gray-600">
-                  Monthly performance insights for your properties
+                  Performance insights for your properties
                 </p>
               </div>
 
               {!loading && !error && properties.length > 0 && (
-                <div className="flex flex-col sm:items-end">
-                  <label className="text-xs font-medium text-gray-700 mb-1">Select Property</label>
-                  <select
-                    value={selectedProperty}
-                    onChange={(e) => setSelectedProperty(e.target.value)}
-                    className="block w-full sm:w-auto min-w-[200px] px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  >
-                    {properties.map((property) => (
-                      <option key={property.id} value={property.id}>
-                        {property.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:items-end gap-3">
+                  <div className="flex flex-wrap gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Select Property</label>
+                      <select
+                        value={selectedProperty}
+                        onChange={(e) => setSelectedProperty(e.target.value)}
+                        className="block w-full sm:w-auto min-w-[180px] px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      >
+                        {properties.map((property) => (
+                          <option key={property.id} value={property.id}>
+                            {property.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Report</label>
+                      <select
+                        value={reportType}
+                        onChange={(e) => setReportType(e.target.value as ReportType)}
+                        className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      >
+                        <option value="total">All time</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="annual">Annual</option>
+                      </select>
+                    </div>
+
+                    {reportType !== 'total' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Year</label>
+                        <input
+                          type="number"
+                          min={1900}
+                          max={2100}
+                          value={year}
+                          onChange={(e) => {
+                            const value = parseInt(e.target.value, 10);
+                            if (!Number.isNaN(value)) setYear(value);
+                          }}
+                          className="block w-28 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        />
+                      </div>
+                    )}
+
+                    {reportType === 'monthly' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Month</label>
+                        <select
+                          value={month}
+                          onChange={(e) => setMonth(parseInt(e.target.value, 10))}
+                          className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        >
+                          {MONTH_NAMES.map((name, index) => (
+                            <option key={name} value={index + 1}>{name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -98,7 +165,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {!loading && !error && selectedProperty && (
-              <RevenueSummary propertyId={selectedProperty} />
+              <RevenueSummary propertyId={selectedProperty} period={period} />
             )}
           </div>
         </div>

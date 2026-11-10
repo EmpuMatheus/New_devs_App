@@ -43,6 +43,19 @@ export class TenantIsolationError extends Error {
   }
 }
 
+export interface RevenueSummaryResponse {
+  property_id: string;
+  total_revenue_exact: string;
+  total_revenue: string;
+  currency: string;
+  reservations_count: number;
+  timezone?: string;
+  year?: number;
+  month?: number;
+  period_start?: string;
+  period_end?: string;
+}
+
 export class SecureAPIClient {
   private static instance: SecureAPIClient;
   private backendUrl: string;
@@ -1450,22 +1463,38 @@ export class SecureAPIClient {
 
   // ============= DASHBOARD API =============
   /**
-   * Get dashboard summary with optional simulation header
+   * Get all-time revenue summary for a property
    */
-  async getDashboardSummary(propertyId: string, options?: { simulatedTenant?: string, timestamp?: number }) {
+  async getDashboardSummary(propertyId: string, options?: { timestamp?: number }): Promise<RevenueSummaryResponse> {
     const queryParams = new URLSearchParams({ property_id: propertyId });
     if (options?.timestamp) {
       queryParams.append('_t', options.timestamp.toString());
     }
 
-    const requestOptions: RequestInit = {};
-    if (options?.simulatedTenant) {
-      requestOptions.headers = {
-        'X-Simulated-Tenant': options.simulatedTenant
-      };
-    }
+    return this.request<RevenueSummaryResponse>(`/api/v1/dashboard/summary?${queryParams}`);
+  }
 
-    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
+  /**
+   * Get monthly revenue for a property using its local timezone
+   */
+  async getMonthlyRevenue(propertyId: string, year: number, month: number): Promise<RevenueSummaryResponse> {
+    const queryParams = new URLSearchParams({
+      property_id: propertyId,
+      year: String(year),
+      month: String(month),
+    });
+    return this.request<RevenueSummaryResponse>(`/api/v1/revenue/monthly?${queryParams}`);
+  }
+
+  /**
+   * Get annual revenue for a property using its local timezone
+   */
+  async getAnnualRevenue(propertyId: string, year: number): Promise<RevenueSummaryResponse> {
+    const queryParams = new URLSearchParams({
+      property_id: propertyId,
+      year: String(year),
+    });
+    return this.request<RevenueSummaryResponse>(`/api/v1/revenue/annual?${queryParams}`);
   }
 
   async uploadCompanyLogo(logo_url: string) {

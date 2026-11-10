@@ -1,42 +1,75 @@
 import React, { useEffect, useState } from 'react';
-import { SecureAPI } from '../lib/secureApi';
+import { SecureAPI, RevenueSummaryResponse } from '../lib/secureApi';
 
-interface RevenueData {
-    property_id: string;
-    total_revenue: number;
-    currency: string;
-    reservations_count: number;
-}
+export type RevenuePeriod =
+    | { type: 'total' }
+    | { type: 'monthly'; year: number; month: number }
+    | { type: 'annual'; year: number };
 
 interface RevenueSummaryProps {
     propertyId: string;
+    period: RevenuePeriod;
     showRaw?: boolean;
 }
 
-export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, showRaw }) => {
-    const [data, setData] = useState<RevenueData | null>(null);
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const formatAmount = (amount: string): string => {
+    const [whole, fraction] = amount.split('.');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+};
+
+export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, period, showRaw }) => {
+    const [data, setData] = useState<RevenueSummaryResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
+    const periodType = period.type;
+    const periodYear = period.type === 'total' ? undefined : period.year;
+    const periodMonth = period.type === 'monthly' ? period.month : undefined;
+
     useEffect(() => {
+        let cancelled = false;
+
         const fetchRevenue = async () => {
             setLoading(true);
+            setError('');
             try {
-                // Use SecureAPI to handle authentication automatically
-                const response = await SecureAPI.getDashboardSummary(propertyId, {
-                    timestamp: Date.now()
-                });
-                setData(response);
+                let response: RevenueSummaryResponse;
+                if (periodType === 'monthly') {
+                    response = await SecureAPI.getMonthlyRevenue(propertyId, periodYear!, periodMonth!);
+                } else if (periodType === 'annual') {
+                    response = await SecureAPI.getAnnualRevenue(propertyId, periodYear!);
+                } else {
+                    response = await SecureAPI.getDashboardSummary(propertyId, {
+                        timestamp: Date.now()
+                    });
+                }
+                if (!cancelled) setData(response);
             } catch (err) {
-                setError('Failed to load revenue data');
-                console.error(err);
+                if (!cancelled) {
+                    setData(null);
+                    setError('Failed to load revenue data');
+                    console.error(err);
+                }
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
 
         fetchRevenue();
-    }, [propertyId]);
+        return () => { cancelled = true; };
+    }, [propertyId, periodType, periodYear, periodMonth]);
+
+    const periodLabel = periodType === 'monthly'
+        ? `${MONTH_NAMES[periodMonth! - 1]} ${periodYear}`
+        : periodType === 'annual'
+            ? `Year ${periodYear}`
+            : 'All time';
 
     if (loading) {
         return (
@@ -46,7 +79,6 @@ export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, show
                     <div className="h-8 bg-gray-100 rounded w-1/2"></div>
                     <div className="flex gap-4 pt-4">
                         <div className="h-12 bg-gray-100 rounded flex-1"></div>
-                        <div className="h-12 bg-gray-100 rounded flex-1"></div>
                     </div>
                 </div>
             </div>
@@ -54,9 +86,9 @@ export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, show
     }
 
     if (error) return <div className="p-4 text-red-500 bg-red-50 rounded-lg">{error}</div>;
-    if (!data) return null;
-
-    const displayTotal = Math.round(data.total_revenue * 100) / 100;
+    if (!data) {
+        return <div className="p-4 text-gray-500 bg-gray-50 rounded-lg">No revenue data available.</div>;
+    }
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-300">
@@ -70,17 +102,12 @@ export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, show
             <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                     <div>
-                        <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Revenue</h2>
+                        <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+                            Total Revenue · {periodLabel}
+                        </h2>
                         <div className="flex items-baseline gap-2 mt-1">
                             <span className="text-3xl font-bold text-gray-900 tracking-tight">
-                                {data.currency} {displayTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                            {/* Fake trend indicator for premium feel */}
-                            <span className="inline-flex items-baseline px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 md:mt-2 lg:mt-0">
-                                <svg className="-ml-1 mr-0.5 h-3 w-3 flex-shrink-0 self-center text-green-500" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
-                                    <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                                </svg>
-                                12%
+                                {data.currency} {formatAmount(data.total_revenue)}
                             </span>
                         </div>
                     </div>
@@ -97,16 +124,9 @@ export const RevenueSummary: React.FC<RevenueSummaryProps> = ({ propertyId, show
                     </div>
                 </div>
 
-                {/* Precision Warning Area */}
-                <div className="mt-4 h-6">
-                    {Math.abs(data.total_revenue - displayTotal) > 0.000001 && showRaw && (
-                        <div className="flex items-center text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
-                            <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            Precision Mismatch Detected
-                        </div>
-                    )}
+                <div className="mt-4 text-xs text-gray-400">
+                    Exact recorded total: {data.currency} {formatAmount(data.total_revenue_exact)}
+                    {data.timezone ? ` · ${data.timezone}` : ''}
                 </div>
             </div>
         </div>

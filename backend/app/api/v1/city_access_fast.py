@@ -10,7 +10,6 @@ from ...models.auth import AuthenticatedUser
 from ...database import supabase
 from ...core.redis_client import redis_client
 from ...core.tenant_cache import tenant_cache
-from ...core.tenant_resolver import TenantResolver
 import json
 import time
 import logging
@@ -165,8 +164,8 @@ async def get_city_access_fast(
         # ✅ UNIFIED TENANT RESOLUTION: Use same TenantResolver as auth.py for consistency
         logger.info(f"🔍 TENANT_RESOLUTION: Starting unified tenant resolution for user {user_email}")
         
-        # Use the same comprehensive tenant resolver as authentication
-        tenant_id = await TenantResolver.resolve_tenant_id(user_id=user_id, user_email=user_email)
+        # Tenant was already resolved and validated during authentication
+        tenant_id = user.tenant_id
         
         logger.info(f"✅ TENANT_RESOLUTION: Resolved tenant_id for {user_email}: {tenant_id}")
         

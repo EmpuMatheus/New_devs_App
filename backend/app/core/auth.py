@@ -104,6 +104,7 @@ async def authenticate_request(
         logger.debug(f"AUTH: Verifying token with Supabase - Token: {token[:20]}...")
 
         # Verify token - handle both Supabase tokens and custom JWT tokens
+        token_payload = None
         try:
             # First try to decode as a custom JWT token.
             try:
@@ -113,6 +114,7 @@ async def authenticate_request(
                     algorithms=["HS256"],
                     audience="authenticated"  # Accept tokens with aud: "authenticated"
                 )
+                token_payload = payload
                 logger.info(f"AUTH: Successfully decoded custom JWT token for {payload.get('email')}")
                 
                 # Create a mock user object from JWT payload
@@ -130,6 +132,10 @@ async def authenticate_request(
                 # If custom JWT fails, try Supabase auth
                 response = supabase.auth.get_user(token)
                 user = response.user
+                token_payload = {
+                    "app_metadata": getattr(user, "app_metadata", {}) or {},
+                    "tenant_id": getattr(user, "tenant_id", None),
+                }
                 
         except Exception as e:
             # Malformed or invalid token (e.g., wrong number of segments)
@@ -253,7 +259,19 @@ async def authenticate_request(
         logger.info(f"User: {user.email} (ID: {user.id})")
 
         # Use TenantResolver for comprehensive tenant resolution
-        tenant_id = await TenantResolver.resolve_tenant_id(token=token, user_id=user.id, user_email=user.email)
+        tenant_id = await TenantResolver.resolve_tenant_id(
+            token=token,
+            user_id=user.id,
+            user_email=user.email,
+            token_payload=token_payload,
+        )
+
+        if not tenant_id:
+            logger.warning("AUTH: No tenant context for user %s", user.email)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tenant context",
+            )
 
         # If we found a tenant_id and it's not in the user's metadata, update it for next time
         current_tenant_in_metadata = None
@@ -510,7 +528,18 @@ async def verify_token_ws(token: str) -> Optional[AuthenticatedUser]:
 
         # Use the comprehensive tenant resolver (same as regular auth)
         logger.info(f"WS_AUTH: Resolving tenant for user {user.email}")
-        tenant_id = await TenantResolver.resolve_tenant_id(token=token, user_id=user.id, user_email=user.email)
+        tenant_id = await TenantResolver.resolve_tenant_id(
+            token=token,
+            user_id=user.id,
+            user_email=user.email,
+            token_payload={
+                "app_metadata": getattr(user, "app_metadata", {}) or {},
+                "tenant_id": getattr(user, "tenant_id", None),
+            },
+        )
+        if not tenant_id:
+            logger.warning("WS_AUTH: No tenant context for user %s", user.email)
+            return None
 
         auth_user = AuthenticatedUser(
             id=user.id,

@@ -209,3 +209,42 @@ Frontend verification was performed through a successful production build, bundl
 7. **No automated tests** — verification was manual/executed via API, SQL, Redis and logs. No test framework was added.
 8. **Frontend SecureAPI tenant extraction** — still ignores `app_metadata.tenant_id`, so its 5-second request cache is bypassed for these custom tokens. Not changed.
 9. **Finance endpoints** — `getFinancialData` / `getRevenueReport` client methods still point at routes that do not exist.
+
+## 8. Phase 4 — Timezone, precision, tenant security and reports
+
+Full details: `PHASE4_IMPLEMENTATION.md`.
+
+### Implemented
+
+- Replaced the broken `calculate_monthly_revenue` stub with a shared tenant-scoped period calculator.
+- Added property-local `ZoneInfo` month/year boundaries converted to UTC; half-open `check_in_date` intervals.
+- Revenue is aggregated as PostgreSQL `NUMERIC` / Python `Decimal`; API returns `total_revenue_exact` (3dp) and `total_revenue` (2dp, `ROUND_HALF_UP`) as strings.
+- Removed the `float()` conversion from the dashboard response.
+- Added `GET /api/v1/revenue/monthly` and `GET /api/v1/revenue/annual`.
+- Cache keys are now `revenue:v2:{tenant}:{property}:{all|month:YYYY-MM|year:YYYY}`; failures and missing properties are not cached.
+- Tenant resolution fails closed: trusted root/app_metadata claims, explicit assignment mappings, otherwise no tenant. `user_metadata` is not trusted.
+- `authenticate_request` rejects missing tenant context with 403; non-static login rejects users without a tenant.
+- Frontend consumes string amounts without `Math.round`, `Number`, or `parseFloat` financial transformations; added report-type/year/month controls and monthly/annual API methods.
+
+### Verified
+
+- 17 stdlib `unittest` tests pass (timezone/DST, precision, resolver security, seeded-database revenue/ownership).
+- Sunset `prop-001` March 2024: exact `2250.000`, display `2250.00`, 4 bookings.
+- Naive UTC control: exact `1000.000`, 3 bookings (proves `res-tz-1` correction).
+- New York March tenant-b: `5032.500`, 7 bookings.
+- Ocean `prop-004` March: `1776.500` / `1776.50` / 4.
+- Ocean monthly `prop-002` (foreign): 404.
+- Invalid month/year: 422; unauthenticated: 401; unknown property: 404.
+- Missing/invalid/untrusted tenant identity: 403; trusted claims resolve to the claimed tenant.
+- Cache keys separate by tenant/property/period; cache hits preserve TTL; DB failure returns 503 and creates no cache entry.
+- Frontend build succeeds; bundle contains the monthly endpoint and no hardcoded property names.
+
+### Remaining after Phase 4
+
+1. Property currency has no dedicated column; it is derived from reservations, and mixed-currency properties are rejected with 500.
+2. No headless-browser end-to-end run was possible; frontend verification used build, bundle inspection, and API calls.
+3. Invalid-timezone behavior is unit-tested; no invalid-timezone database fixture exists (records were not modified).
+4. SecureAPI's own short-lived request cache still bypasses `app_metadata` tenant extraction (performance only).
+5. Finance endpoints `/api/v1/finance/*` remain unimplemented.
+6. No automated browser test framework; backend tests use stdlib `unittest`.
+7. Cache invalidation on reservation writes still needs a hook when write endpoints are added; TTL is 300 s.

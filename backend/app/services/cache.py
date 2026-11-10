@@ -1,33 +1,61 @@
 import json
-import redis.asyncio as redis
-from typing import Dict, Any, Optional
 import os
+from typing import Any, Awaitable, Callable, Dict, Optional
 
-# Initialize Redis client (typically configured centrally).
+import redis.asyncio as redis
+
 redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 
-async def get_revenue_summary(property_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Fetches revenue summary, utilizing caching to improve performance.
-    """
-    # Tenant must be part of the key: property IDs are only unique per tenant.
-    cache_key = f"revenue:{tenant_id}:{property_id}"
+CACHE_TTL = 300
 
-    # Try to get from cache
-    cached = await redis_client.get(cache_key)
+
+def _cache_key(property_id: str, tenant_id: str, period: str = "all") -> str:
+    return f"revenue:v2:{tenant_id}:{property_id}:{period}"
+
+
+async def _cached(
+    key: str, calculate: Callable[[], Awaitable[Optional[Dict[str, Any]]]]
+) -> Optional[Dict[str, Any]]:
+    cached = await redis_client.get(key)
     if cached:
         return json.loads(cached)
 
-    # Revenue calculation is delegated to the reservation service.
-    from app.services.reservations import calculate_total_revenue
-
-    # Calculate revenue. Database failures propagate; only successful results
-    # (including a legitimate zero) are cached.
-    result = await calculate_total_revenue(property_id, tenant_id)
+    result = await calculate()
     if result is None:
         return None
 
-    # Cache the result for 5 minutes
-    await redis_client.setex(cache_key, 300, json.dumps(result))
-
+    await redis_client.setex(key, CACHE_TTL, json.dumps(result))
     return result
+
+
+async def get_revenue_summary(
+    property_id: str, tenant_id: str
+) -> Optional[Dict[str, Any]]:
+    from app.services.reservations import calculate_total_revenue
+
+    return await _cached(
+        _cache_key(property_id, tenant_id, "all"),
+        lambda: calculate_total_revenue(property_id, tenant_id),
+    )
+
+
+async def get_monthly_revenue(
+    property_id: str, tenant_id: str, year: int, month: int
+) -> Optional[Dict[str, Any]]:
+    from app.services.reservations import calculate_monthly_revenue
+
+    return await _cached(
+        _cache_key(property_id, tenant_id, f"month:{year:04d}-{month:02d}"),
+        lambda: calculate_monthly_revenue(property_id, tenant_id, year, month),
+    )
+
+
+async def get_annual_revenue(
+    property_id: str, tenant_id: str, year: int
+) -> Optional[Dict[str, Any]]:
+    from app.services.reservations import calculate_annual_revenue
+
+    return await _cached(
+        _cache_key(property_id, tenant_id, f"year:{year:04d}"),
+        lambda: calculate_annual_revenue(property_id, tenant_id, year),
+    )

@@ -1,104 +1,97 @@
 """
 Minimal tenant resolver for authentication.
+
+Resolution order:
+1. Tenant claim from a verified token payload (root or app_metadata only).
+2. Explicit assignment-account mapping.
+3. No tenant (fail closed).
 """
+import re
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
+TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _valid_tenant_id(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    tenant_id = value.strip()
+    if not tenant_id or not TENANT_ID_PATTERN.match(tenant_id):
+        return None
+    return tenant_id
+
 
 class TenantResolver:
-    """Minimal tenant resolver that extracts tenant_id from JWT claims."""
+    """Resolve tenant context from trusted claims or explicit account mappings."""
 
     @staticmethod
-    def resolve_tenant_from_token(token_payload: dict) -> Optional[str]:
+    def resolve_tenant_from_token(token_payload: Optional[dict]) -> Optional[str]:
+        """Extract tenant_id from a verified JWT payload.
+
+        Only the root claim and app_metadata are trusted. user_metadata is
+        user-editable and is intentionally ignored.
         """
-        Extract tenant_id from JWT token payload.
+        if not isinstance(token_payload, dict):
+            return None
 
-        Args:
-            token_payload: Decoded JWT payload
+        claim = _valid_tenant_id(token_payload.get("tenant_id"))
+        if claim:
+            return claim
 
-        Returns:
-            Tenant ID if found, None otherwise
-        """
-        # Try user_metadata first (most common location)
-        if 'user_metadata' in token_payload:
-            tenant_id = token_payload['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
+        app_metadata = token_payload.get("app_metadata")
+        if isinstance(app_metadata, dict):
+            claim = _valid_tenant_id(app_metadata.get("tenant_id"))
+            if claim:
+                return claim
 
-        # Try app_metadata as fallback
-        if 'app_metadata' in token_payload:
-            tenant_id = token_payload['app_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        # Try root level
-        tenant_id = token_payload.get('tenant_id')
-        if tenant_id:
-            return tenant_id
-
-        logger.warning("No tenant_id found in token payload")
+        logger.warning("No trusted tenant_id found in token payload")
         return None
 
     @staticmethod
     def resolve_tenant_from_user(user_data: dict) -> Optional[str]:
-        """
-        Extract tenant_id from user data.
+        """Extract tenant_id from trusted user data (root/app_metadata only)."""
+        if not isinstance(user_data, dict):
+            return None
 
-        Args:
-            user_data: User data dictionary
+        claim = _valid_tenant_id(user_data.get("tenant_id"))
+        if claim:
+            return claim
 
-        Returns:
-            Tenant ID if found, None otherwise
-        """
-        # Check various possible locations
-        if 'tenant_id' in user_data:
-            return user_data['tenant_id']
-
-        if 'user_metadata' in user_data:
-            tenant_id = user_data['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        if 'app_metadata' in user_data:
-            tenant_id = user_data['app_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
+        app_metadata = user_data.get("app_metadata")
+        if isinstance(app_metadata, dict):
+            claim = _valid_tenant_id(app_metadata.get("tenant_id"))
+            if claim:
+                return claim
 
         return None
 
     @staticmethod
-    async def resolve_tenant_id(user_id: str, user_email: str, token: Optional[str] = None) -> str:
-        """
-        Resolve tenant ID for a user.
-        
-        Args:
-            user_id: User ID
-            user_email: User email
-            
-        Returns:
-            Tenant ID
-        """
-        # Fallback mapping by known user email.
+    async def resolve_tenant_id(
+        user_id: str,
+        user_email: str,
+        token: Optional[str] = None,
+        token_payload: Optional[dict] = None,
+    ) -> Optional[str]:
+        """Resolve tenant for a user, failing closed when no trusted source exists."""
+        claim = TenantResolver.resolve_tenant_from_token(token_payload)
+        if claim:
+            return claim
+
+        # Explicit challenge-account mappings.
         if user_email == "sunset@propertyflow.com":
             return "tenant-a"
         if user_email == "ocean@propertyflow.com":
             return "tenant-b"
         if user_email == "candidate@propertyflow.com":
             return "tenant-a"
-            
-        # Default fallback
-        return "tenant-a"
+
+        logger.warning("No tenant mapping found for user %s", user_email)
+        return None
 
     @staticmethod
     async def update_user_tenant_metadata(user_id: str, tenant_id: str) -> None:
-        """
-        Update user metadata with tenant_id.
-        
-        Args:
-            user_id: User ID
-            tenant_id: Tenant ID
-        """
-        # No-op in this resolver implementation.
+        """No-op placeholder retained for compatibility."""
         pass
